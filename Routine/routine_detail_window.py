@@ -29,6 +29,7 @@ class RoutineDetailWindow(ctk.CTkToplevel):
         detail_frame = ctk.CTkFrame(self)
         detail_frame.grid(row=0, column=0, padx=10, pady=10)
 
+
         # Define fields and initialize with placeholder data
         self.fields = {
             "Order Number": ctk.CTkLabel(detail_frame, text=f"Order Number: {self.routine_data[1]}"),
@@ -103,6 +104,8 @@ class RoutineDetailWindow(ctk.CTkToplevel):
         self.save_button = ctk.CTkButton(detail_frame, text="Save Changes", command=self.save_changes)
         self.save_button.grid(row=(len(self.fields) // 3) * 2 + 5, column=0, columnspan=3, padx=10, pady=10)
 
+        self.add_propperty_button = ctk.CTkButton(detail_frame, text="Add Propperty", command=self.open_add_property_dialog)   
+        self.add_propperty_button.grid(row=(len(self.fields) // 3) * 2 + 6, column=0, columnspan=3, padx=10, pady=10)
         self.populate_fields()  # Populate fields with fetched routine data
 
     def fetch_routine_data(self, routine_name):
@@ -150,6 +153,10 @@ class RoutineDetailWindow(ctk.CTkToplevel):
             self.rich_text.insert("1.0", self.routine_data[8] or "")  # Insert description
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred while populating fields: {e}")
+
+
+    def open_add_property_dialog(self):
+        AddPropertyDialog(self)
 
     def save_changes(self):
         """Save changes made to the routine details."""
@@ -222,3 +229,45 @@ class RoutineDetailWindow(ctk.CTkToplevel):
             messagebox.showerror("Error", f"An error occurred while saving changes: {e}")
         finally:
             conn.close()  # Ensure the database connection is always closed
+
+
+
+class AddPropertyDialog(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Add Property")
+        self.geometry("300x200")
+
+        # Entry for property name
+        self.property_name_entry = ctk.CTkEntry(self, placeholder_text="Property Name")
+        self.property_name_entry.pack(pady=10)
+
+        # Dropdown for property type
+        self.property_type_var = tk.StringVar()
+        self.property_type_combobox = ttk.Combobox(self, textvariable=self.property_type_var, state="readonly")
+        self.property_type_combobox['values'] = ['number', 'text', 'URL']
+        self.property_type_combobox.pack(pady=10)
+
+        # Save button
+        self.save_button = ctk.CTkButton(self, text="Save Property", command=self.save_property)
+        self.save_button.pack(pady=10)
+
+    def save_property(self):
+        property_name = self.property_name_entry.get()
+        property_type = self.property_type_var.get()
+        if not property_name or not property_type:
+            messagebox.showerror("Error", "All fields are required.")
+            return
+
+        # Save the new property in the database
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        try:
+            cur.execute("INSERT INTO properties (type, name) VALUES (?, ?)", (property_type, property_name))
+            conn.commit()
+            messagebox.showinfo("Success", "Property added successfully.")
+            self.destroy()
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Error", "Property name must be unique.")
+        finally:
+            conn.close()

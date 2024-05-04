@@ -14,13 +14,18 @@ from tkhtmlview import HTMLScrolledText  # Supports HTML-like formatting
 DB_NAME = "routine_manager_v3.db"  # New database name to avoid conflicts with older DB
 
 def init_db():
-    """Initialize the SQLite database and create tables if they don't exist."""
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-    # Create routines table with additional columns
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS routines (
+    
+    # Optionally drop existing tables if a fresh setup is okay
+    cur.execute("DROP TABLE IF EXISTS routines")
+    cur.execute("DROP TABLE IF EXISTS logs")
+    cur.execute("DROP TABLE IF EXISTS properties")
+    cur.execute("DROP TABLE IF EXISTS routine_properties")
+    
+    # Recreate tables
+    cur.execute("""
+        CREATE TABLE routines (
             id INTEGER PRIMARY KEY,
             order_num INTEGER,
             name TEXT UNIQUE,
@@ -30,33 +35,51 @@ def init_db():
             due_date DATETIME DEFAULT NULL,
             short_description TEXT DEFAULT NULL,
             description TEXT DEFAULT NULL,
-            repeat TEXT DEFAULT NULL,  -- daily/weekly/monthly/yearly
-            days TEXT DEFAULT NULL,  -- sun, mon, ...
             human_name TEXT DEFAULT NULL,
-            contact TEXT DEFAULT NULL,
-            email TEXT DEFAULT NULL,
-            verified INTEGER DEFAULT 0,  -- 0 (not verified), 1 (verified)
-            importance TEXT DEFAULT 'not',  -- not, important, urgent
-            status TEXT DEFAULT 'not stated',  -- not stated, in progress, complete
+            verified INTEGER DEFAULT 0,
+            importance TEXT DEFAULT 'not',
+            status TEXT DEFAULT 'not stated',
             price REAL DEFAULT 0,
-            link TEXT DEFAULT NULL
+            repeat TEXT DEFAULT 'none',
+            days TEXT DEFAULT '0,0,0,0,0,0,0',
+            contact TEXT DEFAULT '',
+            email TEXT DEFAULT '',
+            link TEXT DEFAULT 'https://',
+            other_properties TEXT DEFAULT ''
         )
-        """
-    )
-    # Create logs table (no change needed here)
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS logs (
+    """)
+    
+    cur.execute("""
+        CREATE TABLE logs (
             id INTEGER PRIMARY KEY,
             routine_name TEXT,
             start_time TEXT,
             end_time TEXT,
             status TEXT
         )
-        """
-    )
+    """)
+    
+    cur.execute("""
+        CREATE TABLE properties (
+            property_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT,
+            name TEXT,
+            path TEXT
+        )
+    """)
+    
+    cur.execute("""
+        CREATE TABLE routine_properties (
+            routine_id INTEGER,
+            property_id INTEGER,
+            value TEXT,
+            FOREIGN KEY(routine_id) REFERENCES routines(id),
+            FOREIGN KEY(property_id) REFERENCES properties(property_id)
+        )
+    """)
     conn.commit()
     conn.close()
+
     
     
 # Define a function to apply text styles
@@ -97,6 +120,7 @@ class RoutineDetailWindow(ctk.CTkToplevel):
 
         self.routine_name = routine_name
         
+        
         # Fetch routine data early to ensure fields have data
         self.routine_data = self.fetch_routine_data(routine_name)
         if not self.routine_data:
@@ -129,10 +153,9 @@ class RoutineDetailWindow(ctk.CTkToplevel):
             "Created Date": ctk.CTkLabel(detail_frame, text=f"Created Date: {self.routine_data[5]}"),
         }
 
-        # Add fields to the grid
         for i, (key, field) in enumerate(self.fields.items()):
-            row = i // 3
-            column = i % 3
+            row = i // 4
+            column = i % 4
             ctk.CTkLabel(detail_frame, text=key).grid(row=row * 2, column=column, padx=5, pady=5, sticky="w")
             field.grid(row=row * 2 + 1, column=column, padx=5, pady=5, sticky="w")
 
@@ -189,12 +212,52 @@ class RoutineDetailWindow(ctk.CTkToplevel):
         self.save_button = ctk.CTkButton(detail_frame, text="Save Changes", command=self.save_changes)
         self.save_button.grid(row=(len(self.fields) // 3) * 2 + 5, column=0, columnspan=3, padx=10, pady=10)
 
+        self.add_property_button = ctk.CTkButton(detail_frame, text="+ Add Property", command=self.add_property)
+        self.add_property_button.grid(row=len(self.fields) // 3 * 2 + 6, column=0, columnspan=3, pady=5)
 
-   
+        
 
         # Populate fields with fetched data
         self.populate_fields()
 
+# Method to fetch and display custom properties
+        self.custom_properties_frame = ctk.CTkFrame(self)
+        self.custom_properties_frame.grid(row=len(self.fields) // 3 * 2 + 6, column=0, columnspan=3, pady=5)
+        self.display_custom_properties()
+
+    def display_custom_properties(self):
+        """Fetch and display custom properties based on the routine's path."""
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute("SELECT name, type FROM properties WHERE path = ?", (self.routine_data[4],))  # Assuming path is at index 4
+        properties = cur.fetchall()
+        for i, (name, prop_type) in enumerate(properties):
+            label = ctk.CTkLabel(self.custom_properties_frame, text=name)
+            label.grid(row=0, column=i, padx=5, sticky="w")
+            label.bind("<Enter>", lambda e, prop_type=prop_type: self.show_tooltip(e, prop_type))
+            label.bind("<Leave>", lambda e: self.hide_tooltip())
+
+        conn.close()
+
+    def show_tooltip(self, event, text):
+        """Show tooltip with property type."""
+        self.tooltip = tk.Toplevel()
+        self.tooltip.wm_overrideredirect(True)
+        self.tooltip.wm_geometry(f"+{event.widget.winfo_pointerx()}+{event.widget.winfo_pointery() + 20}")
+        tk.Label(self.tooltip, text=text, background="yellow", relief='solid', borderwidth=1).pack()
+
+    def hide_tooltip(self):
+        """Hide tooltip."""
+        if self.tooltip:
+            self.tooltip.destroy()
+            self.tooltip = None
+
+    def add_property(self):
+        if self.routine_data:
+            routine_path = self.routine_data[4]  # Assuming the path is at index 4
+            property_window = PropertyWindow(self, path=routine_path)
+            property_window.grab_set()  # Make the property window modal
+    
     def fetch_routine_data(self, routine_name):
         """Fetch routine data from the SQLite database."""
         try:
@@ -209,7 +272,6 @@ class RoutineDetailWindow(ctk.CTkToplevel):
             conn.close()  # Always ensure connection is closed
 
         return routine_data
-
     def populate_fields(self):
         """Populate fields with fetched routine data."""
         if not self.routine_data:
@@ -223,37 +285,31 @@ class RoutineDetailWindow(ctk.CTkToplevel):
 
         # Populate each field with appropriate data, handling exceptions
         try:
-            self.fields["Routine Name"].insert(0, self.routine_data[2])
-            self.fields["Duration (sec)"].insert(0, str(self.routine_data[3]))
-            self.fields["Path"].insert(0, self.routine_data[4])
-
-            due_date = self.routine_data[6]
+            self.fields["Routine Name"].insert(0, self.routine_data[2])  # name
+            self.fields["Duration (sec)"].insert(0, str(self.routine_data[3]))  # duration
+            self.fields["Path"].insert(0, self.routine_data[4])  # path
+            due_date = self.routine_data[6]  # due_date
             if due_date:
                 self.fields["Due Date"].set_date(dt.datetime.strptime(due_date, "%Y-%m-%d"))
             else:
                 self.fields["Due Date"].set_date(dt.datetime.now())
-
-            self.fields["Short Description"].insert(0, self.routine_data[7] or "")
-            self.fields["Description"].insert(0, self.routine_data[8] or "")
-            self.fields["Repeat"].insert(0, self.routine_data[9] or "")
-            self.fields["Days"].insert(0, self.routine_data[10] or "")
-            self.fields["Human Name"].insert(0, self.routine_data[11] or "")
-            self.fields["Contact"].insert(0, self.routine_data[12] or "")
-            self.fields["Email"].insert(0, self.routine_data[13] or "")
-            self.fields["Importance"].insert(0, self.routine_data[15] or "")
-            self.fields["Status"].set(self.routine_data[16] or "not stated")
-            self.fields["Price"].insert(0, str(self.routine_data[17]))
-            self.fields["Link"].insert(0, self.routine_data[18] or "")
-            
-                        # Clear the rich text box and populate with the description
-            self.rich_text.delete("1.0", tk.END)  # Clear any existing text
-            self.rich_text.insert("1.0", self.routine_data[8] or "")  # Insert description
-
-
+            self.fields["Short Description"].insert(0, self.routine_data[7] or "")  # short_description
+            self.fields["Description"].insert(0, self.routine_data[8] or "")  # description
+            self.fields["Repeat"].insert(0, self.routine_data[14] or "none")  # repeat
+            self.fields["Days"].insert(0, self.routine_data[15] or "0,0,0,0,0,0,0")  # days
+            self.fields["Human Name"].insert(0, self.routine_data[9] or "guest")  # human_name
+            self.fields["Contact"].insert(0, self.routine_data[16] or "")  # contact
+            self.fields["Email"].insert(0, self.routine_data[17] or "")  # email
+            self.fields["Importance"].insert(0, self.routine_data[11] or "not")  # importance
+            self.fields["Status"].set(self.routine_data[12] or "not stated")  # status
+            self.fields["Price"].insert(0, str(self.routine_data[13] or 0))  # price
+            self.fields["Link"].insert(0, self.routine_data[18] or "https://")  # link
+            # Clear the rich text box and populate with the description
+            self.rich_text.delete("1.0", tk.END)
+            self.rich_text.insert("1.0", self.routine_data[8] or "")
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred while populating fields: {e}")
-            
-            
+
     
     def save_changes(self):
         """Save changes made to the routine details."""
@@ -813,15 +869,11 @@ class RoutineApp(ctk.CTk):
 
             conn.close()
     def add_routine(self):
-        name = self.name_entry.get().strip()
+        name = self.name_entry.get().strip() or "Guest"  # Default name if blank
         try:
-            duration = int(self.duration_entry.get().strip())
+            duration = int(self.duration_entry.get().strip())  # Ensure duration is an integer
         except ValueError:
             messagebox.showerror("Invalid input", "Please enter a valid duration (integer).")
-            return
-
-        if not name:
-            messagebox.showerror("Invalid input", "Routine name cannot be empty.")
             return
 
         conn = sqlite3.connect(DB_NAME)
@@ -829,9 +881,7 @@ class RoutineApp(ctk.CTk):
 
         # Check if the routine name already exists
         cur.execute("SELECT name FROM routines WHERE name = ?", (name,))
-        existing_routine = cur.fetchone()
-        
-        if existing_routine:
+        if cur.fetchone():
             messagebox.showerror("Duplicate name", "A routine with this name already exists.")
             conn.close()
             return
@@ -840,33 +890,34 @@ class RoutineApp(ctk.CTk):
         order = self.next_order
         self.next_order += 1
 
-        # Additional properties
+        # Prepare default values for the routine
         path = self.path
         due_date = None
         short_description = "A short description"
         description = "A detailed description"
-        repeat = None
-        days = None
-        human_name = None
-        contact = None
-        email = None
+        human_name = "guest"
+        repeat = "none"  # No repeat by default
+        days = "0,0,0,0,0,0,0"  # No days selected by default
+        contact = ''  # Blank by default
+        email = ''  # Blank by default
         verified = 0
         importance = "not"
         status = "not stated"
         price = 0
-        link = None
+        link = 'https://'  # Default link prefix
 
+        # Execute the corrected insert query
         cur.execute(
             """
             INSERT INTO routines (
                 order_num, name, duration, path, due_date, short_description,
-                description, repeat, days, human_name, contact, email, verified,
+                description, human_name, repeat, days, contact, email, verified,
                 importance, status, price, link
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 order, name, duration, path, due_date, short_description, description,
-                repeat, days, human_name, contact, email, verified, importance,
+                human_name, repeat, days, contact, email, verified, importance,
                 status, price, link,
             ),
         )
@@ -875,12 +926,11 @@ class RoutineApp(ctk.CTk):
         conn.close()
 
         # Add routine to the Treeview
-        self.routine_tree.insert(
-            "", "end", values=(order, name, duration, path)
-        )
+        self.routine_tree.insert("", "end", values=(order, name, duration, path))
 
         self.name_entry.delete(0, tk.END)
         self.duration_entry.delete(0, tk.END)
+        messagebox.showinfo("Routine Added", "New routine added successfully with default settings.")
 
     def update_routine(self):
         selected = self.routine_tree.selection()
@@ -945,7 +995,55 @@ class RoutineApp(ctk.CTk):
         conn.close()
 
         self.log_tree.insert("", "end", values=(routine_name, start_time, end_time, status))
+class PropertyWindow(ctk.CTkToplevel):
+    def __init__(self, parent, path):
+        super().__init__(parent)
+        self.title("Add New Property")
+        self.path = path  # Store the path
 
+        # Dropdown for selecting property type
+        property_types = ["priority", "tags", "long text", "short text", "number",
+                          "checkbox", "URL", "email", "phone", "formula",
+                          "related routine", "created by", "assigned to", "button", "multi select"]
+        self.property_type_dropdown = ctk.CTkComboBox(self, values=property_types)
+        self.property_type_dropdown.pack(pady=10)
+
+        # Entry for naming the property
+        self.property_name_entry = ctk.CTkEntry(self)
+        self.property_name_entry.pack(pady=10)
+
+        # Button to add the property
+        add_button = ctk.CTkButton(self, text="Add Property", command=self.add_property_to_db)
+        add_button.pack(pady=10)
+
+    def add_property_to_db(self):
+            property_type = self.property_type_dropdown.get()
+            property_name = self.property_name_entry.get()
+
+            # Open a connection to the database
+            conn = sqlite3.connect(DB_NAME)
+            cur = conn.cursor()
+
+            # Insert new property into the properties table including the path
+            try:
+                cur.execute(
+                    "INSERT INTO properties (type, name, path) VALUES (?, ?, ?)",
+                    (property_type, property_name, self.path)
+                )
+                conn.commit()
+                messagebox.showinfo("Success", "Property added successfully.")
+            except sqlite3.Error as e:
+                messagebox.showerror("Error", f"Failed to add property: {e}")
+            finally:
+                conn.close()
+
+            self.destroy()
+
+    def close_window(self):
+        try:
+            super().destroy()
+        except AttributeError as e:
+            print("Caught an AttributeError during destruction:", e)
 
 if __name__ == "__main__":
     app = RoutineApp()
