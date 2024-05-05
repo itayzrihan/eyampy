@@ -256,12 +256,12 @@ class RoutineDetailWindow(ctk.CTkToplevel):
 
             if input_widget:
                 input_widget.grid(row=row, column=1, padx=5, pady=2, sticky="w")
-                self.custom_property_widgets[name] = input_widget  # Store the widget in the dictionary
-            
-            
+                self.custom_property_widgets[name] = input_widget
             row += 1
-
+            
         conn.close()
+        self.populate_fields()
+
 
     def show_tooltip(self, event, text):
         """Show tooltip with property type."""
