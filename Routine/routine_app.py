@@ -14,7 +14,7 @@ import json  # For serializing custom properties
 # Database setup
 DB_NAME = "routine_manager_v3.db"  # New database name to avoid conflicts with older DB
 
-def init_db(drop_tables=False):
+def init_db(drop_tables=True):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     
@@ -154,6 +154,7 @@ class RoutineDetailWindow(ctk.CTkToplevel):
         super().__init__(parent)
         
         self.title(f"Routine Details: {routine_name}")
+        self.geometry("1200x600")  # Adjust the size as needed to accommodate both frames side by side
 
 
         self.routine_name = routine_name
@@ -167,9 +168,14 @@ class RoutineDetailWindow(ctk.CTkToplevel):
             self.destroy()
             return
         
+        routine_names = self.fetch_routine_names()
+
+        
         # Frame for detail entry fields
         detail_frame = ctk.CTkFrame(self)
         detail_frame.grid(row=0, column=0, padx=10, pady=10)
+
+    
 
         # Define fields and initialize with placeholder data
         self.fields = {
@@ -180,12 +186,12 @@ class RoutineDetailWindow(ctk.CTkToplevel):
             "Due Date": DateEntry(detail_frame),
             "Short Description": ctk.CTkEntry(detail_frame, width=150),
             "Description": ctk.CTkEntry(detail_frame, width=150),
-            "Repeat": ctk.CTkEntry(detail_frame, width=150),
-            "Days": ctk.CTkEntry(detail_frame, width=150),
-            "Human Name": ctk.CTkEntry(detail_frame, width=150),
-            "Contact": ctk.CTkEntry(detail_frame, width=150),
+            "Repeat": ctk.CTkComboBox(detail_frame, values=["daily", "weekly", "monthly", "yearly", "none"]),
+            "Days": ctk.CTkComboBox(detail_frame, values=["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]),
+            "Owner Name": ctk.CTkEntry(detail_frame, width=150),
+            "Contact": ctk.CTkComboBox(detail_frame, values=routine_names),  # Populate dropdown with routine names
             "Email": ctk.CTkEntry(detail_frame, width=150),
-            "Importance": ctk.CTkEntry(detail_frame, width=150),
+            "Importance": ctk.CTkComboBox(detail_frame, values=["not", "bit", "important","very", "critical"]),
             "Status": ctk.CTkComboBox(detail_frame, values=["not stated", "in progress", "complete"]),
             "Price": ctk.CTkEntry(detail_frame, width=150),
             "Link": ctk.CTkEntry(detail_frame, width=150),
@@ -238,31 +244,63 @@ class RoutineDetailWindow(ctk.CTkToplevel):
             button.pack(side="left", padx=5, pady=5)
 
 
+
         # Frame for detail entry fields
         detail_frame = ctk.CTkFrame(self)
         detail_frame.grid(row=(len(self.fields) // 3) * 2 + 4, column=0, padx=10, pady=10)
+
+
+        # Frame for custom properties, placed next to detail_frame
+        self.custom_properties_frame = ctk.CTkFrame(self)
+        self.custom_properties_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
 
      # Rich text box for detailed descriptions
         # Rich text box with HTML formatting
         self.rich_text = HTMLScrolledText(detail_frame, height=10)
         self.rich_text.grid(row=0, column=0, padx=10, pady=10, sticky="w")
         
+                # Listbox for selecting days
+        self.day_listbox = tk.Listbox(detail_frame, selectmode='extended', height=7, exportselection=0)
+        days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+        for day in days:
+            self.day_listbox.insert(tk.END, day)
+        self.day_listbox.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
         # Save button to update the database
         self.save_button = ctk.CTkButton(detail_frame, text="Save Changes", command=self.save_changes)
         self.save_button.grid(row=(len(self.fields) // 3) * 2 + 5, column=0, columnspan=3, padx=10, pady=10)
 
         self.add_property_button = ctk.CTkButton(detail_frame, text="+ Add Property", command=self.add_property)
-        self.add_property_button.grid(row=len(self.fields) // 3 * 2 + 6, column=0, columnspan=3, pady=5)
+        self.add_property_button.grid(row=len(self.fields) // 3 * 2 + 5, column=1, columnspan=3, pady=5)
+        
+                # Adding a button next to the dropdown to open the selected routine's full card
+        self.contact_button = ctk.CTkButton(detail_frame, text="Open Contact Card", command=self.open_contact_card)
+        self.contact_button.grid(row=len(self.fields) // 3 * 2 + 6, column=2, columnspan=3, pady=5)
+
 
         
 
         # Populate fields with fetched data
         self.populate_fields()
 
-# Method to fetch and display custom properties
-        self.custom_properties_frame = ctk.CTkFrame(self)
-        self.custom_properties_frame.grid(row=len(self.fields) // 3 * 2 + 6, column=0, columnspan=3, pady=5)
+
         self.display_custom_properties()
+        
+        
+        
+    def open_contact_card(self):
+        """Open the full detail card for the selected contact routine."""
+        selected_routine_name = self.fields["Contact"].get()
+        if selected_routine_name:
+            RoutineDetailWindow(self, selected_routine_name)
+        else:
+            messagebox.showerror("Selection Error", "No contact routine selected.")
+
+    def get_selected_days_binary(self):
+        """Returns a binary string representing selected days."""
+        selection_indices = set(self.day_listbox.curselection())
+        return ','.join('1' if i in selection_indices else '0' for i in range(7))
+
 
     def display_custom_properties(self):
         """Fetch and display custom properties based on the routine's path, with dynamic input widgets."""
@@ -296,9 +334,22 @@ class RoutineDetailWindow(ctk.CTkToplevel):
                 input_widget = ctk.CTkEntry(self.custom_properties_frame, placeholder_text="Enter text", width=300)
             elif prop_type == "short text":
                 input_widget = ctk.CTkEntry(self.custom_properties_frame, placeholder_text="Enter text", width=150)
+            elif prop_type == "related routine":
+    # Fetch routine names for the combobox
+                routine_names = self.fetch_routine_names()
+                input_widget = ctk.CTkComboBox(self.custom_properties_frame, values=routine_names)
+                input_widget.grid(row=row, column=1, padx=5, pady=2, sticky="w")
+                # Add a button next to the combobox to open the selected routine's full card
+                open_card_button = ctk.CTkButton(
+                    self.custom_properties_frame,
+                    text="Open",
+                    command=lambda rn=input_widget.get(): self.open_routine_card(rn)
+                )
+                open_card_button.grid(row=row, column=2, padx=5, pady=2, sticky="w")
+
             else:
                 input_widget = ctk.CTkLabel(self.custom_properties_frame, text=f"Unhandled type: {prop_type}")
-
+            
             if input_widget:
                 input_widget.grid(row=row, column=1, padx=5, pady=2, sticky="w")
                 self.custom_property_widgets[name] = input_widget
@@ -306,6 +357,12 @@ class RoutineDetailWindow(ctk.CTkToplevel):
             
         conn.close()
         self.populate_fields()  # Ensure this is called at the end of processing
+
+    def open_routine_card(self, routine_name):
+        if routine_name:
+            RoutineDetailWindow(self, routine_name)
+        else:
+            messagebox.showerror("Selection Error", "No related routine selected.")
 
     def show_tooltip(self, event, text):
         """Show tooltip with property type."""
@@ -349,6 +406,16 @@ class RoutineDetailWindow(ctk.CTkToplevel):
             return
         print("Routine Data:", self.routine_data)  # Diagnostic print to see what data was fetched
 
+
+
+        days_binary = self.routine_data[15].split(',')
+
+
+        # Set selections in the Listbox based on the days_binary array
+        for index, day in enumerate(days_binary):
+            if day == '1':
+                self.day_listbox.selection_set(index)  # This selects the index in the Listbox
+
         # Clear fields before populating
         for field in self.fields.values():
             if isinstance(field, ctk.CTkEntry):
@@ -366,12 +433,12 @@ class RoutineDetailWindow(ctk.CTkToplevel):
                 self.fields["Due Date"].set_date(dt.datetime.now())
             self.fields["Short Description"].insert(0, self.routine_data[7] or "")  # short_description
             self.fields["Description"].insert(0, self.routine_data[8] or "")  # description
-            self.fields["Repeat"].insert(0, self.routine_data[14] or "none")  # repeat
-            self.fields["Days"].insert(0, self.routine_data[15] or "0,0,0,0,0,0,0")  # days
-            self.fields["Human Name"].insert(0, self.routine_data[9] or "guest")  # human_name
-            self.fields["Contact"].insert(0, self.routine_data[16] or "")  # contact
+            self.fields["Repeat"].set(self.routine_data[10])  # repeat
+            self.fields["Days"].set(self.routine_data[15])  # Assuming the day information is at index 15 in data
+            self.fields["Owner Name"].insert(0, self.routine_data[9] or "guest")  # human_name
+            self.fields["Contact"].set(self.routine_data[16] or "x")  # contact
             self.fields["Email"].insert(0, self.routine_data[17] or "")  # email
-            self.fields["Importance"].insert(0, self.routine_data[11] or "not")  # importance
+            self.fields["Importance"].set(self.routine_data[11] or "not")  # importance
             self.fields["Status"].set(self.routine_data[12] or "not stated")  # status
             self.fields["Price"].insert(0, str(self.routine_data[13] or 0))  # price
             self.fields["Link"].insert(0, self.routine_data[18] or "https://")  # link
@@ -396,12 +463,22 @@ class RoutineDetailWindow(ctk.CTkToplevel):
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred while populating fields: {e}")
 
-    
+    def fetch_routine_names(self):
+        """Fetch all routine names from the database to populate the contact dropdown."""
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM routines ORDER BY name")
+        routine_names = [row[0] for row in cur.fetchall()]
+        conn.close()
+        return routine_names
+
     def save_changes(self):
         """Save changes made to the routine details."""
         try:
             conn = sqlite3.connect(DB_NAME)
             cur = conn.cursor()
+
+            selected_days = self.get_selected_days_binary()  # Get the binary day string
 
             # Get the order number from the label and extract the numeric part
             order_num_text = self.fields["Order Number"].cget("text")  # "Order Number: X"
@@ -420,8 +497,8 @@ class RoutineDetailWindow(ctk.CTkToplevel):
                 "short_description": self.fields["Short Description"].get(),
                 "description": full_description,  # Save the rich text content
                 "repeat": self.fields["Repeat"].get(),
-                "days": self.fields["Days"].get(),
-                "human_name": self.fields["Human Name"].get(),
+                "days": selected_days,  # Use the binary day string
+                "human_name": self.fields["Owner Name"].get(),
                 "contact": self.fields["Contact"].get(),
                 "email": self.fields["Email"].get(),
                 "importance": self.fields["Importance"].get(),
