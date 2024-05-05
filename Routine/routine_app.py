@@ -14,7 +14,7 @@ import json  # For serializing custom properties
 # Database setup
 DB_NAME = "routine_manager_v3.db"  # New database name to avoid conflicts with older DB
 
-def init_db(drop_tables=True):
+def init_db(drop_tables=False):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     
@@ -148,13 +148,45 @@ def set_right_to_left(rich_text):
     rich_text.tk.call(rich_text._w, "configure", "-dir", new_state)
 
 
+class ScrollableWindow(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Scrollable Window")
+        self.geometry("400x300")
+        
+        # Create a canvas and a scrollbar
+        canvas = ctk.CTkCanvas(self)
+        scrollbar = ctk.CTkScrollbar(self, command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Pack the scrollbar to the right, fill y-axis
+        scrollbar.pack(side='right', fill='y')
+        # Pack the canvas to fill the space
+        canvas.pack(side='left', fill='both', expand=True)
+        
+        # Create a frame inside the canvas
+        scrollable_frame = ctk.CTkFrame(canvas)
+        # Add that frame to a window in the canvas
+        canvas.create_window((0, 0), window=scrollable_frame, anchor='nw')
+
+        # Populate the frame with some widgets
+        for i in range(50):
+            ctk.CTkLabel(scrollable_frame, text=f"Item {i+1}").pack()
+
+        # Update the scrollregion of the canvas to encompass the frame
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+def open_scrollable_window():
+    ScrollableWindow(app)  # Assuming 'app' is your main application instance
+
+
 
 class RoutineDetailWindow(ctk.CTkToplevel):
     def __init__(self, parent, routine_name):
         super().__init__(parent)
         
         self.title(f"Routine Details: {routine_name}")
-        self.geometry("1200x600")  # Adjust the size as needed to accommodate both frames side by side
+        self.geometry("1200x600")  
 
 
         self.routine_name = routine_name
@@ -789,8 +821,14 @@ class RoutineApp(ctk.CTk):
         )
         self.end_date_picker.pack(side=ctk.LEFT, padx=5)
 
+
         filter_button = ctk.CTkButton(self.filter_frame, text="Filter Logs", command=self.filter_logs_by_date)
         filter_button.pack(side=tk.LEFT, padx=5)
+        
+        # Add this function call to your main window where you want the new button to appear
+        scroll_window_button = ctk.CTkButton(self.filter_frame, text="Open Scrollable Window", command=open_scrollable_window)
+        scroll_window_button.pack(side=tk.LEFT, padx=5)
+
         self.load_routines()  # Load routines from SQLite database
         self.load_logs()  # Load logs from SQLite database
         
