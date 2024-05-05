@@ -14,59 +14,105 @@ import json  # For serializing custom properties
 # Database setup
 DB_NAME = "routine_manager_v3.db"  # New database name to avoid conflicts with older DB
 
-def init_db():
+def init_db(drop_tables=False):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     
-    # Optionally drop existing tables if a fresh setup is okay
-    cur.execute("DROP TABLE IF EXISTS routines")
-    cur.execute("DROP TABLE IF EXISTS logs")
-    cur.execute("DROP TABLE IF EXISTS properties")
-    
-    # Recreate tables
-    cur.execute("""
-        CREATE TABLE routines (
-            id INTEGER PRIMARY KEY,
-            order_num INTEGER,
-            name TEXT UNIQUE,
-            duration INTEGER,
-            path TEXT,
-            created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-            due_date DATETIME DEFAULT NULL,
-            short_description TEXT DEFAULT NULL,
-            description TEXT DEFAULT NULL,
-            human_name TEXT DEFAULT NULL,
-            verified INTEGER DEFAULT 0,
-            importance TEXT DEFAULT 'not',
-            status TEXT DEFAULT 'not stated',
-            price REAL DEFAULT 0,
-            repeat TEXT DEFAULT 'none',
-            days TEXT DEFAULT '0,0,0,0,0,0,0',
-            contact TEXT DEFAULT '',
-            email TEXT DEFAULT '',
-            link TEXT DEFAULT 'https://',
-            other_properties TEXT DEFAULT ''
-        )
-    """)
-    
-    cur.execute("""
-        CREATE TABLE logs (
-            id INTEGER PRIMARY KEY,
-            routine_name TEXT,
-            start_time TEXT,
-            end_time TEXT,
-            status TEXT
-        )
-    """)
-    
-    cur.execute("""
-        CREATE TABLE properties (
-            property_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type TEXT,
-            name TEXT,
-            path TEXT
-        )
-    """)
+    if drop_tables:
+        # Optionally drop existing tables if a fresh setup is okay
+        cur.execute("DROP TABLE IF EXISTS routines")
+        cur.execute("DROP TABLE IF EXISTS logs")
+        cur.execute("DROP TABLE IF EXISTS properties")
+        
+        # Recreate tables
+        cur.execute("""
+            CREATE TABLE routines (
+                id INTEGER PRIMARY KEY,
+                order_num INTEGER,
+                name TEXT UNIQUE,
+                duration INTEGER,
+                path TEXT,
+                created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+                due_date DATETIME DEFAULT NULL,
+                short_description TEXT DEFAULT NULL,
+                description TEXT DEFAULT NULL,
+                human_name TEXT DEFAULT NULL,
+                verified INTEGER DEFAULT 0,
+                importance TEXT DEFAULT 'not',
+                status TEXT DEFAULT 'not stated',
+                price REAL DEFAULT 0,
+                repeat TEXT DEFAULT 'none',
+                days TEXT DEFAULT '0,0,0,0,0,0,0',
+                contact TEXT DEFAULT '',
+                email TEXT DEFAULT '',
+                link TEXT DEFAULT 'https://',
+                other_properties TEXT DEFAULT ''
+            )
+        """)
+        
+        cur.execute("""
+            CREATE TABLE logs (
+                id INTEGER PRIMARY KEY,
+                routine_name TEXT,
+                start_time TEXT,
+                end_time TEXT,
+                status TEXT
+            )
+        """)
+        
+        cur.execute("""
+            CREATE TABLE properties (
+                property_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT,
+                name TEXT,
+                path TEXT
+            )
+        """)
+    else:
+        # Check if the tables exist and create if they don't
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS routines (
+                id INTEGER PRIMARY KEY,
+                order_num INTEGER,
+                name TEXT UNIQUE,
+                duration INTEGER,
+                path TEXT,
+                created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+                due_date DATETIME DEFAULT NULL,
+                short_description TEXT DEFAULT NULL,
+                description TEXT DEFAULT NULL,
+                human_name TEXT DEFAULT NULL,
+                verified INTEGER DEFAULT 0,
+                importance TEXT DEFAULT 'not',
+                status TEXT DEFAULT 'not stated',
+                price REAL DEFAULT 0,
+                repeat TEXT DEFAULT 'none',
+                days TEXT DEFAULT '0,0,0,0,0,0,0',
+                contact TEXT DEFAULT '',
+                email TEXT DEFAULT '',
+                link TEXT DEFAULT 'https://',
+                other_properties TEXT DEFAULT ''
+            )
+        """)
+        
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS logs (
+                id INTEGER PRIMARY KEY,
+                routine_name TEXT,
+                start_time TEXT,
+                end_time TEXT,
+                status TEXT
+            )
+        """)
+        
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS properties (
+                property_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT,
+                name TEXT,
+                path TEXT
+            )
+        """)
 
     conn.commit()
     conn.close()
@@ -108,6 +154,7 @@ class RoutineDetailWindow(ctk.CTkToplevel):
         super().__init__(parent)
         
         self.title(f"Routine Details: {routine_name}")
+
 
         self.routine_name = routine_name
         self.custom_property_widgets = {}  # Add this line to initialize the dictionary
@@ -225,12 +272,10 @@ class RoutineDetailWindow(ctk.CTkToplevel):
         properties = cur.fetchall()
         row = 1  # Start from the second row to give space for headers or other elements
         for name, prop_type in properties:
-            print(f"Property: {name}, Type: {prop_type}")
-        # Existing widget creation code
-        # Existing widget grid code
-            print(f"Widget for {name} created and placed.")
             label = ctk.CTkLabel(self.custom_properties_frame, text=name)
             label.grid(row=row, column=0, padx=5, pady=2, sticky="w")
+            label.bind("<Enter>", lambda e, n=name, t=prop_type: self.show_tooltip(e, f"{n} - Type: {t}"))
+            label.bind("<Leave>", self.hide_tooltip)
             
             # Create dynamic input based on property type
             input_widget = None
@@ -260,22 +305,20 @@ class RoutineDetailWindow(ctk.CTkToplevel):
             row += 1
             
         conn.close()
-        self.populate_fields()
-
+        self.populate_fields()  # Ensure this is called at the end of processing
 
     def show_tooltip(self, event, text):
         """Show tooltip with property type."""
         self.tooltip = tk.Toplevel()
         self.tooltip.wm_overrideredirect(True)
-        self.tooltip.wm_geometry(f"+{event.widget.winfo_pointerx()}+{event.widget.winfo_pointery() + 20}")
+        self.tooltip.wm_geometry(f"+{event.widget.winfo_pointerx() + 20}+{event.widget.winfo_pointery() + 20}")
         tk.Label(self.tooltip, text=text, background="yellow", relief='solid', borderwidth=1).pack()
 
-    def hide_tooltip(self):
+    def hide_tooltip(self, event=None):
         """Hide tooltip."""
         if self.tooltip:
             self.tooltip.destroy()
             self.tooltip = None
-
     def add_property(self):
         if self.routine_data:
             routine_path = self.routine_data[4]  # Assuming the path is at index 4
