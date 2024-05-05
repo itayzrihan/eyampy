@@ -11,8 +11,37 @@ from tkinter import ttk, Text  # Import Text for multi-line text box
 from tkhtmlview import HTMLScrolledText  # Supports HTML-like formatting
 import ast  # For literal evaluation of custom properties
 import json  # For serializing custom properties
+import pyttsx3
+from plyer import notification
+import subprocess
+import signal
+from pathlib import Path
+from IPython.display import Audio
+
+
+
+import speech_recognition as sr
+import pyttsx3
+import os
+from dotenv import load_dotenv
+import openai
+
 # Database setup
 DB_NAME = "routine_manager_v3.db"  # New database name to avoid conflicts with older DB
+
+engine = pyttsx3.init()
+recognizer = sr.Recognizer()
+
+
+def speak(text, rate=150):
+    # Set properties each time before using the engine to speak
+    engine.setProperty('rate', rate)
+    zira_voice_id = "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Speech\\Voices\\Tokens\\TTS_MS_EN-US_ZIRA_11.0"
+    engine.setProperty('voice', zira_voice_id)
+    engine.say(text)
+    engine.runAndWait()
+
+
 
 def init_db(drop_tables=False):
     conn = sqlite3.connect(DB_NAME)
@@ -192,7 +221,9 @@ class RoutineDetailWindow(ctk.CTkToplevel):
         self.routine_name = routine_name
         self.custom_property_widgets = {}  # Add this line to initialize the dictionary
 
-        
+        self.configure_tts()
+
+ 
         # Fetch routine data early to ensure fields have data
         self.routine_data = self.fetch_routine_data(routine_name)
         if not self.routine_data:
@@ -318,7 +349,52 @@ class RoutineDetailWindow(ctk.CTkToplevel):
 
         self.display_custom_properties()
         
+    def notify(self, message):
+        notification.notify(title="Reminder", message=message, timeout=10)
+        engine.say(message)
+        engine.runAndWait()
         
+        
+    def configure_tts(self):
+        engine.setProperty('rate', 150)
+        zira_voice_id = "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Speech\\Voices\\Tokens\\TTS_MS_EN-US_ZIRA_11.0"
+        engine.setProperty('voice', zira_voice_id)
+
+    
+    def handle_speech(self):
+        with sr.Microphone() as source:
+            recognizer.adjust_for_ambient_noise(source)
+            audio = recognizer.listen(source)
+            try:
+                text = recognizer.recognize_google(audio)
+                self.text_box.set(text)
+                response = self.send_to_chatGPT(text)
+                engine.say(response)
+                engine.runAndWait()
+            except sr.UnknownValueError:
+                engine.say("Sorry, I did not understand that.")
+                engine.runAndWait()
+            except sr.RequestError:
+                engine.say("API request failed.")
+                engine.runAndWait()
+                
+                
+    def run_notifier(self):
+        while True:
+            time.sleep(1)
+            current_time = time.time()
+            for reminder_id, details in list(self.reminders.items()):
+                label, message, interval, start_time = details
+                elapsed = current_time - start_time
+                remaining = interval * 60 - elapsed  # Convert interval to seconds
+                if remaining <= 0:
+                    self.notify(message)
+                    self.reminders[reminder_id][3] = current_time  # reset timer
+                minutes, seconds = divmod(int(remaining), 60)
+                if remaining < 60:
+                    self.update_label(label, f"{message} - Next in {int(remaining)}s")
+                else:
+                    self.update_label(label, f"{message} - Next in {minutes}m {seconds}s")
         
     def open_contact_card(self):
         """Open the full detail card for the selected contact routine."""
@@ -610,10 +686,8 @@ class PlayRoutineWindow(ctk.CTkToplevel):
         self.countdown_label = ctk.CTkLabel(self, text=f"Time Remaining: {self.remaining_time} sec")
         self.countdown_label.pack(pady=10)
 
-
         button_frame = ctk.CTkFrame(self)
         button_frame.pack(pady=10)
-        
 
         self.pause_button = ctk.CTkButton(button_frame, text="Pause", command=self.pause_resume)
         self.pause_button.pack(side=tk.LEFT, padx=5)
@@ -627,13 +701,20 @@ class PlayRoutineWindow(ctk.CTkToplevel):
         self.countdown_thread = threading.Thread(target=self.countdown)
         self.countdown_thread.start()
 
+    def notify(self, status):
+        message = f"{self.routine_name} - {status}"
+        notification.notify(title="Routine Status", message=message, timeout=10)
+        speak(message)
+
     def pause_resume(self):
         if self.is_paused:
             self.is_paused = False
             self.pause_button.configure(text="Pause")
+            self.notify("Resumed")
         else:
             self.is_paused = True
             self.pause_button.configure(text="Resume")
+            self.notify("Paused")
 
     def skip(self):
         self.remaining_time = 0
@@ -644,9 +725,10 @@ class PlayRoutineWindow(ctk.CTkToplevel):
         self.close_window("Finished Early")
 
     def close_window(self, status):
-        self.is_running = False  # Stop the countdown thread
+        self.is_running = False
         end_time = time.strftime("%Y-%m-%d %H:%M:%S")
         self.log_callback(self.routine_name, self.start_time, end_time, status)
+        self.notify(status)
         if self.on_completion:
             self.on_completion()  # Callback for when the routine is completed
         self.destroy()
@@ -657,51 +739,12 @@ class PlayRoutineWindow(ctk.CTkToplevel):
             if not self.is_paused:
                 time.sleep(1)
                 self.remaining_time -= 1
-                # Check if the window is still running before updating the label
                 if self.is_running:
                     self.countdown_label.configure(text=f"Time Remaining: {self.remaining_time} sec")
             else:
                 time.sleep(1)
-
-        if self.is_running and self.remaining_time == 0 and not self.is_paused:
-            self.close_window("Finished")
-
-    def pause_resume(self):
-        if self.is_paused:
-            self.is_paused = False
-            self.pause_button.configure(text="Pause")
-        else:
-            self.is_paused = True
-            self.pause_button.configure(text="Resume")
-
-    def skip(self):
-        self.remaining_time = 0
-        self.close_window("Skipped")
-
-    def finish_early(self):
-        self.remaining_time = 0
-        self.close_window("Finished Early")
-
-    def close_window(self, status):
-        end_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        self.log_callback(self.routine_name, self.start_time, end_time, status)
-        if self.on_completion:
-            self.on_completion()  # Callback for when the routine is completed
-        self.destroy()
-
-    def countdown(self):
-        self.start_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        while self.remaining_time > 0:
-            if not self.is_paused:
-                time.sleep(1)
-                self.remaining_time -= 1
-                self.countdown_label.configure(text=f"Time Remaining: {self.remaining_time} sec")
-            else:
-                time.sleep(1)
-
-        if self.remaining_time == 0 and not self.is_paused:
-            self.close_window("Finished")
-
+        if self.is_running and self.remaining_time == 0:
+            self.close_window("Completed")
 
 class RoutineApp(ctk.CTk):
     def __init__(self):
