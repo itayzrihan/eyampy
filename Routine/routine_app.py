@@ -9,7 +9,8 @@ import sqlite3
 import customtkinter as ctk
 from tkinter import ttk, Text  # Import Text for multi-line text box
 from tkhtmlview import HTMLScrolledText  # Supports HTML-like formatting
-
+import ast  # For literal evaluation of custom properties
+import json  # For serializing custom properties
 # Database setup
 DB_NAME = "routine_manager_v3.db"  # New database name to avoid conflicts with older DB
 
@@ -21,7 +22,6 @@ def init_db():
     cur.execute("DROP TABLE IF EXISTS routines")
     cur.execute("DROP TABLE IF EXISTS logs")
     cur.execute("DROP TABLE IF EXISTS properties")
-    cur.execute("DROP TABLE IF EXISTS routine_properties")
     
     # Recreate tables
     cur.execute("""
@@ -67,16 +67,7 @@ def init_db():
             path TEXT
         )
     """)
-    
-    cur.execute("""
-        CREATE TABLE routine_properties (
-            routine_id INTEGER,
-            property_id INTEGER,
-            value TEXT,
-            FOREIGN KEY(routine_id) REFERENCES routines(id),
-            FOREIGN KEY(property_id) REFERENCES properties(property_id)
-        )
-    """)
+
     conn.commit()
     conn.close()
 
@@ -119,7 +110,8 @@ class RoutineDetailWindow(ctk.CTkToplevel):
         self.title(f"Routine Details: {routine_name}")
 
         self.routine_name = routine_name
-        
+        self.custom_property_widgets = {}  # Add this line to initialize the dictionary
+
         
         # Fetch routine data early to ensure fields have data
         self.routine_data = self.fetch_routine_data(routine_name)
@@ -154,8 +146,8 @@ class RoutineDetailWindow(ctk.CTkToplevel):
         }
 
         for i, (key, field) in enumerate(self.fields.items()):
-            row = i // 4
-            column = i % 4
+            row = i // 5
+            column = i % 5
             ctk.CTkLabel(detail_frame, text=key).grid(row=row * 2, column=column, padx=5, pady=5, sticky="w")
             field.grid(row=row * 2 + 1, column=column, padx=5, pady=5, sticky="w")
 
@@ -226,16 +218,48 @@ class RoutineDetailWindow(ctk.CTkToplevel):
         self.display_custom_properties()
 
     def display_custom_properties(self):
-        """Fetch and display custom properties based on the routine's path."""
+        """Fetch and display custom properties based on the routine's path, with dynamic input widgets."""
         conn = sqlite3.connect(DB_NAME)
         cur = conn.cursor()
         cur.execute("SELECT name, type FROM properties WHERE path = ?", (self.routine_data[4],))  # Assuming path is at index 4
         properties = cur.fetchall()
-        for i, (name, prop_type) in enumerate(properties):
+        row = 1  # Start from the second row to give space for headers or other elements
+        for name, prop_type in properties:
+            print(f"Property: {name}, Type: {prop_type}")
+        # Existing widget creation code
+        # Existing widget grid code
+            print(f"Widget for {name} created and placed.")
             label = ctk.CTkLabel(self.custom_properties_frame, text=name)
-            label.grid(row=0, column=i, padx=5, sticky="w")
-            label.bind("<Enter>", lambda e, prop_type=prop_type: self.show_tooltip(e, prop_type))
-            label.bind("<Leave>", lambda e: self.hide_tooltip())
+            label.grid(row=row, column=0, padx=5, pady=2, sticky="w")
+            
+            # Create dynamic input based on property type
+            input_widget = None
+            if prop_type == "date":
+                input_widget = DateEntry(self.custom_properties_frame)
+            elif prop_type == "number":
+                input_widget = ctk.CTkEntry(self.custom_properties_frame, placeholder_text="Enter number")
+            elif prop_type == "checkbox":
+                var = tk.BooleanVar()
+                input_widget = ctk.CTkCheckBox(self.custom_properties_frame, text="", variable=var)
+            elif prop_type == "URL":
+                input_widget = ctk.CTkEntry(self.custom_properties_frame, placeholder_text="Enter URL")
+            elif prop_type == "email":
+                input_widget = ctk.CTkEntry(self.custom_properties_frame, placeholder_text="Enter email")
+            elif prop_type == "phone":
+                input_widget = ctk.CTkEntry(self.custom_properties_frame, placeholder_text="Enter phone number")
+            elif prop_type == "long text":
+                input_widget = ctk.CTkEntry(self.custom_properties_frame, placeholder_text="Enter text", width=300)
+            elif prop_type == "short text":
+                input_widget = ctk.CTkEntry(self.custom_properties_frame, placeholder_text="Enter text", width=150)
+            else:
+                input_widget = ctk.CTkLabel(self.custom_properties_frame, text=f"Unhandled type: {prop_type}")
+
+            if input_widget:
+                input_widget.grid(row=row, column=1, padx=5, pady=2, sticky="w")
+                self.custom_property_widgets[name] = input_widget  # Store the widget in the dictionary
+            
+            
+            row += 1
 
         conn.close()
 
@@ -265,18 +289,22 @@ class RoutineDetailWindow(ctk.CTkToplevel):
             cur = conn.cursor()
             cur.execute("SELECT * FROM routines WHERE name = ?", (routine_name,))
             routine_data = cur.fetchone()
+            print("Fetched routine data:", routine_data)  # Diagnostic print
+            return routine_data
         except Exception as e:
             messagebox.showerror("Database Error", f"Error fetching routine data: {e}")
             return None
         finally:
-            conn.close()  # Always ensure connection is closed
-
+            conn.close()
         return routine_data
     def populate_fields(self):
         """Populate fields with fetched routine data."""
+        print("Populating fields...")
+
         if not self.routine_data:
             messagebox.showerror("Error", "Routine data could not be fetched.")
             return
+        print("Routine Data:", self.routine_data)  # Diagnostic print to see what data was fetched
 
         # Clear fields before populating
         for field in self.fields.values():
@@ -307,6 +335,21 @@ class RoutineDetailWindow(ctk.CTkToplevel):
             # Clear the rich text box and populate with the description
             self.rich_text.delete("1.0", tk.END)
             self.rich_text.insert("1.0", self.routine_data[8] or "")
+            
+            
+            other_properties = json.loads(self.routine_data[19])
+            print("Other Properties:", other_properties)  # Print the deserialized other_properties data
+            print("Populating custom properties...")
+            for prop_name, value in other_properties.items():
+                widget = self.custom_property_widgets.get(prop_name)
+                if widget:
+                    if isinstance(widget, ctk.CTkEntry) or isinstance(widget, DateEntry):
+                        widget.delete(0, tk.END)
+                        widget.insert(0, value)
+                    elif isinstance(widget, ctk.CTkCheckBox):
+                        widget.var.set(value)
+                    print(f"Populated {prop_name} with {value}")
+
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred while populating fields: {e}")
 
@@ -345,13 +388,21 @@ class RoutineDetailWindow(ctk.CTkToplevel):
                 "verified": self.verified_var.get(),  # Checkbox value
             }
 
+            custom_props = {}
+            for prop_name, widget in self.custom_property_widgets.items():
+                if isinstance(widget, (ctk.CTkEntry, DateEntry)):
+                    custom_props[prop_name] = widget.get()
+                elif isinstance(widget, ctk.CTkCheckBox):
+                    custom_props[prop_name] = widget.var.get()
+            updated_values['other_properties'] = json.dumps(custom_props)  # Serialize as JSON
+
             # Update the routine in the database with the correct order number
             cur.execute(
                 """
                 UPDATE routines 
                 SET order_num = ?, name = ?, duration = ?, path = ?, due_date = ?, short_description = ?, description = ?, repeat = ?, 
                 days = ?, human_name = ?, contact = ?, email = ?, verified = ?, importance = ?, status = ?, price = ?, 
-                link = ?
+                link = ?, other_properties = ?
                 WHERE name = ?
                 """,
                 (
@@ -372,6 +423,7 @@ class RoutineDetailWindow(ctk.CTkToplevel):
                     updated_values["status"],
                     updated_values["price"],
                     updated_values["link"],
+                    updated_values["other_properties"],
                     self.routine_name,
                 ),
             )
@@ -1004,7 +1056,7 @@ class PropertyWindow(ctk.CTkToplevel):
         # Dropdown for selecting property type
         property_types = ["priority", "tags", "long text", "short text", "number",
                           "checkbox", "URL", "email", "phone", "formula",
-                          "related routine", "created by", "assigned to", "button", "multi select"]
+                          "related routine", "created by", "assigned to", "button", "multi select", "date"]
         self.property_type_dropdown = ctk.CTkComboBox(self, values=property_types)
         self.property_type_dropdown.pack(pady=10)
 
